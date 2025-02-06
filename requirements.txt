@@ -95,3 +95,5 @@ urllib3==2.3.0
 virtualenv==20.25.1
 yarl==1.18.3
 zstandard==0.23.0
+streamlit
+pandas
