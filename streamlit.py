@@ -5,6 +5,8 @@ import numpy as np
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
+from utils.txt_feature_extractor import extract_features_from_sample_battery_from_text
+
 # ----------------------------------------------
 # 1) Use langchain_neo4j for Neo4jGraph and GraphCypherQAChain
 # ----------------------------------------------
@@ -102,6 +104,12 @@ CYPHER_GENERATION_TEMPLATE = """Task: Generate a Cypher query to extract battery
 Schema:
 {schema}
 
+Instructions:
+- The schema is provided as key-value pairs (e.g., "mean_grad_last_100_cycles: -0.0007513692975044251").
+- Identify the battery property mentioned in the question.
+- Extract the numeric value corresponding to that property from the schema.
+- Use this numeric value in the generated query in place of any placeholder.
+
 Examples of queries:
 # Which battery has the highest total cycles?
 MATCH (b:Battery) RETURN b.battery_id, b.total_cycles ORDER BY b.total_cycles DESC LIMIT 1
@@ -132,54 +140,20 @@ st.title("🔋 Battery Data Query with AI (OpenAI)")
 # Variable to hold file-based schema (if file is uploaded)
 file_schema = None
 
-# File Upload Section (for reading local battery data file)
 uploaded_file = st.file_uploader("Upload a battery data file (.txt)", type=["txt"])
 if uploaded_file:
     file_content = uploaded_file.read().decode("utf-8")
     try:
-        # Convert each line to float
-        data_list = [
-            float(line.strip().replace(',', ''))
-            for line in file_content.split("\n")
-            if line.strip()
-        ]
-        slopes = {}
-        for k in [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]:
-            if len(data_list) >= k:
-                slope = np.gradient(data_list[-k:], 1)
-                slopes[f"mean_grad_last_{k}_cycles"] = np.mean(slope)
-            else:
-                slopes[f"mean_grad_last_{k}_cycles"] = "NaN"
-        # Build a schema string from the extracted slopes
-        file_schema = "\n".join(f"{key}: {value}" for key, value in slopes.items())
+        # Use the new function to extract features from the file content.
+        features = extract_features_from_sample_battery_from_text(file_content)
+        
+        # Build a schema string from the extracted features
+        file_schema = "\n".join(f"{key}: {value}" for key, value in features.items())
         st.success("✅ File uploaded and processed successfully!")
         st.write("📊 Extracted Features:")
         st.text(file_schema)
     except ValueError as e:
         st.error(f"⚠️ Error reading file: {e}")
-
-# Optional UI controls for manual search
-selected_slope_window = st.selectbox(
-    "Select slope window (cycles):",
-    [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],
-    index=6
-)
-
-scaled_threshold = st.number_input(
-    "Set Similarity Threshold (scaled):",
-    min_value=1,
-    max_value=5000,
-    value=10,
-    step=10,
-    format="%d"
-)
-actual_threshold = scaled_threshold / 1e6
-top_k = st.slider(
-    "Number of top similar batteries to return:",
-    min_value=1,
-    max_value=10,
-    value=3
-)
 
 # AI-Powered Query Box
 user_query = st.text_input("🔍 Ask a question about battery features:")
