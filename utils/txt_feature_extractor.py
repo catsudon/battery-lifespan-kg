@@ -1,26 +1,16 @@
 import numpy as np
 
-def extract_features_from_sample_battery(file_path):
-    """
-    Reads a sample battery file and extracts features from the q_d_n values.
-    
-    Parameters:
-        file_path (str): Path to the text file containing q_d_n values (one per line).
-        
-    Returns:
-        dict: A dictionary containing:
-            - slope_last_k_cycles: Slope over the last k cycles for each k in the list.
-            - mean_grad_last_k_cycles: Mean gradient (via np.gradient) over the last k cycles.
-            - trimmed_q_d_n_avg: Average value of the trimmed q_d_n array.
-            - total_cycles: Total number of cycles computed as the length of the trimmed q_d_n array.
-    """
-    # Load the q_d_n values from file (one value per line)
-    with open(file_path, 'r') as f:
-        # Convert each non-empty line to a float
-        q_d_n = [float(line.strip()) for line in f if line.strip()]
+def extract_features_from_sample_battery_from_text(file_text: str):
+    # Load the q_d_n values from the text, handling comma separation per line.
+    q_d_n_values = []
+    for line in file_text.splitlines():
+        # Remove leading/trailing whitespace and trailing commas
+        value_str = line.strip().rstrip(',')
+        if value_str:
+            q_d_n_values.append(float(value_str))
     
     # Convert the list to a numpy array
-    q_d_n_array = np.array(q_d_n)
+    q_d_n_array = np.array(q_d_n_values)
     
     # Trim trailing zeros from the q_d_n array (assumes zeros at the end indicate no data)
     trimmed_q_d_n = np.trim_zeros(q_d_n_array, 'b')
@@ -40,7 +30,7 @@ def extract_features_from_sample_battery(file_path):
     # For each k, compute the slope over the last k cycles and the mean gradient
     for k in k_values:
         if total_cycles > k:
-            # Slope: (last value - value k cycles ago) divided by k
+            # Slope: difference between the last value and the value k cycles ago divided by k
             slope = (trimmed_q_d_n[-1] - trimmed_q_d_n[-k]) / k
             
             # Mean gradient over the last k cycles using numpy.gradient

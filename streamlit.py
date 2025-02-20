@@ -5,6 +5,8 @@ import numpy as np
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
+from utils.txt_feature_extractor import extract_features_from_sample_battery_from_text
+
 # ----------------------------------------------
 # 1) Use langchain_neo4j for Neo4jGraph and GraphCypherQAChain
 # ----------------------------------------------
@@ -132,31 +134,21 @@ st.title("🔋 Battery Data Query with AI (OpenAI)")
 # Variable to hold file-based schema (if file is uploaded)
 file_schema = None
 
-# File Upload Section (for reading local battery data file)
 uploaded_file = st.file_uploader("Upload a battery data file (.txt)", type=["txt"])
 if uploaded_file:
     file_content = uploaded_file.read().decode("utf-8")
     try:
-        # Convert each line to float
-        data_list = [
-            float(line.strip().replace(',', ''))
-            for line in file_content.split("\n")
-            if line.strip()
-        ]
-        slopes = {}
-        for k in [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]:
-            if len(data_list) >= k:
-                slope = np.gradient(data_list[-k:], 1)
-                slopes[f"mean_grad_last_{k}_cycles"] = np.mean(slope)
-            else:
-                slopes[f"mean_grad_last_{k}_cycles"] = "NaN"
-        # Build a schema string from the extracted slopes
-        file_schema = "\n".join(f"{key}: {value}" for key, value in slopes.items())
+        # Use the new function to extract features from the file content.
+        features = extract_features_from_sample_battery_from_text(file_content)
+        
+        # Build a schema string from the extracted features
+        file_schema = "\n".join(f"{key}: {value}" for key, value in features.items())
         st.success("✅ File uploaded and processed successfully!")
         st.write("📊 Extracted Features:")
         st.text(file_schema)
     except ValueError as e:
         st.error(f"⚠️ Error reading file: {e}")
+
 
 # AI-Powered Query Box
 user_query = st.text_input("🔍 Ask a question about battery features:")
