@@ -1,143 +1,201 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
 from neo4j import GraphDatabase
+from dotenv import load_dotenv
 
+# ----------------------------------------------
+# 1) Use langchain_neo4j for Neo4jGraph and GraphCypherQAChain
+# ----------------------------------------------
+from langchain_neo4j import Neo4jGraph
+from langchain_neo4j import GraphCypherQAChain
 
-# --- Neo4j Configuration ---
-NEO4J_URI = "neo4j+s://3b31837b.databases.neo4j.io"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "D4W3Zfi44nAJfStBuxSE2DpKhlk_nMP6ybEjvOX5qxw"
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+# ----------------------------------------------
+# 2) Official LangChain for Prompts, ExampleSelector, LLM, and Embeddings
+# ----------------------------------------------
+from langchain.prompts import PromptTemplate
+from langchain.prompts.example_selector import SemanticSimilarityExampleSelector
+from langchain.chat_models import ChatOpenAI
+from langchain.embeddings.openai import OpenAIEmbeddings
 
+# ----------------------------------------------
+# 3) Use Neo4j Vector Store from langchain_neo4j for Example Selection
+# ----------------------------------------------
+from langchain_neo4j import Neo4jVector
 
-# --- Function to Extract `slope_last_500_cycles` ---
-def extract_slope_from_data(file_content):
-    """
-    Extracts the `slope_last_500_cycles` feature from the uploaded file data.
-    
-    Args:
-        file_content (str): Raw text content from the uploaded file.
+# --- Load environment variables ---
+load_dotenv()
 
-    Returns:
-        float: The extracted slope value.
-    """
-    # Compute the mean gradient for different last-k cycles
-    last_k_th_cycles_list = [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-    slope_results = {}
+# --- Retrieve API keys and database credentials ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USERNAME = os.getenv("NEO4J_USERNAME")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
-    for k in last_k_th_cycles_list:
-        if len(file_content) >= k:
-            slope = np.gradient(file_content[-k:], 1)  # Compute gradient
-            mean_slope = np.mean(slope)  # Take the mean
-        else:
-            mean_slope = np.nan  # Not enough data
+# --- Check if credentials are loaded ---
+if not OPENAI_API_KEY:
+    st.error("⚠️ OpenAI API key is missing! Please set it in your `.env` file.")
+if not NEO4J_URI or not NEO4J_USERNAME or not NEO4J_PASSWORD:
+    st.error("⚠️ Neo4j credentials are missing! Please set them in your `.env` file.")
 
-        slope_results[f'mean_grad_last_{k}_cycles'] = mean_slope
-    
-    
-    return slope_results
+# --- Initialize Neo4j Connection ---
+driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 
-# --- Neo4j Query Function ---
-# @tool
-def query_similar_batteries(test_slope: float, threshold: int = 10, top_k: int = 3, scale_factor: int = 1e6):
-    """
-    Query Neo4j graph DB to find batteries similar to a given test battery based on a feature.
-    
-    Args:
-        test_slope (float): The extracted slope value from uploaded data.
-        threshold (int): The max similarity difference allowed (default: 10).
-        top_k (int): The number of closest matches to return (default: 3).
-    Returns:
-        List[Dict]: A list of the closest matching batteries and their charging policies.
-    """
-    with driver.session() as session:
-        query = """
-        MATCH (cp:ChargingPolicy)-[:USED_BY]->(b:Battery)
-        WHERE abs(b.slope_last_500_cycles - $test_slope) < $threshold
-        RETURN b.battery_id AS battery_id, 
-               b.slope_last_500_cycles AS feature_value, 
-               abs(b.slope_last_500_cycles - $test_slope) AS similarity,
-               cp.charging_policy AS charging_policy
-        ORDER BY similarity ASC
-        LIMIT $top_k
-        """
+# Use Neo4jGraph from langchain_neo4j
+graph = Neo4jGraph(url=NEO4J_URI, username=NEO4J_USERNAME, password=NEO4J_PASSWORD)
 
-        results = session.run(query, test_slope=test_slope, threshold=threshold, top_k=top_k)
-        
-        output = []
-        for record in results:
-            output.append({
-                "battery_id": record["battery_id"],
-                "feature_value": record["feature_value"],
-                "similarity": record["similarity"] * scale_factor,
-                "charging_policy": record["charging_policy"] or "Unknown"
-            })
-        
-        return output
+# --- Initialize OpenAI LLM ---
+llm = ChatOpenAI(
+    model_name="gpt-4",
+    openai_api_key=OPENAI_API_KEY,
+    temperature=0.0  # adjust to your preference
+)
+
+# --- Initialize OpenAI Embeddings ---
+embedder = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+
+# --- Initialize Neo4j Vector Store for Semantic Similarity ---
+vectorstore = Neo4jVector(
+    url=NEO4J_URI,
+    username=NEO4J_USERNAME,
+    password=NEO4J_PASSWORD,
+    embedding=embedder
+)
+
+# --- Example Prompts for Battery Data ---
+# Reflecting your actual node structure: Battery and chargingPolicy
+examples = [
+    {
+        "question": "Which battery has the highest total cycles?",
+        "query": "MATCH (b:Battery) RETURN b.battery_id, b.total_cycles ORDER BY b.total_cycles DESC LIMIT 1"
+    },
+    {
+        "question": "Find batteries similar to one with slope_last_500_cycles = -0.000385",
+        "query": "MATCH (b:Battery) WHERE abs(b.slope_last_500_cycles - (-0.000385)) < 0.0001 RETURN b.battery_id, b.slope_last_500_cycles"
+    },
+    {
+        "question": "What is the charging policy of battery ID 'b1c19'?",
+        "query": "MATCH (b:Battery {battery_id: 'b1c19'})-[:LINKED_TO]->(cp:chargingPolicy) RETURN cp.charging_policy"
+    },
+    {
+        "question": "List all charging policies in the database.",
+        "query": "MATCH (cp:chargingPolicy) RETURN cp.charging_policy"
+    },
+    {
+        "question": "Which batteries have similar mean_grad_last_300_cycles?",
+        "query": "MATCH (b:Battery) WHERE abs(b.mean_grad_last_300_cycles - (-0.000578)) < 0.0001 RETURN b.battery_id, b.mean_grad_last_300_cycles"
+    },
+]
+
+example_selector = SemanticSimilarityExampleSelector.from_examples(
+    examples,
+    embedder,
+    vectorstore,
+    k=5,
+    input_keys=["question"]
+)
+
+# --- Prompt Template ---
+# Note: Changed the variable from "question" to "query" to match the chain's expected input.
+CYPHER_GENERATION_TEMPLATE = """Task: Generate a Cypher query to extract battery-related data from a Neo4j database.
+Schema:
+{schema}
+
+Examples of queries:
+# Which battery has the highest total cycles?
+MATCH (b:Battery) RETURN b.battery_id, b.total_cycles ORDER BY b.total_cycles DESC LIMIT 1
+
+# Find batteries similar to one with slope_last_500_cycles = -0.000385
+MATCH (b:Battery) WHERE abs(b.slope_last_500_cycles - (-0.000385)) < 0.0001 RETURN b.battery_id, b.slope_last_500_cycles
+
+# The query is:
+{query}
+"""
+
+CYPHER_GENERATION_PROMPT = PromptTemplate(
+    input_variables=["schema", "query"],
+    template=CYPHER_GENERATION_TEMPLATE
+)
+
+# Use GraphCypherQAChain from langchain_neo4j
+chain = GraphCypherQAChain.from_llm(
+    llm=llm,
+    graph=graph,
+    cypher_prompt=CYPHER_GENERATION_PROMPT,
+    allow_dangerous_requests=True,
+)
 
 # --- Streamlit UI ---
-st.title("🔋 Battery Similarity Finder")
+st.title("🔋 Battery Data Query with AI (OpenAI)")
 
-# File Upload Section
+# Variable to hold file-based schema (if file is uploaded)
+file_schema = None
+
+# File Upload Section (for reading local battery data file)
 uploaded_file = st.file_uploader("Upload a battery data file (.txt)", type=["txt"])
+if uploaded_file:
+    file_content = uploaded_file.read().decode("utf-8")
+    try:
+        # Convert each line to float
+        data_list = [
+            float(line.strip().replace(',', ''))
+            for line in file_content.split("\n")
+            if line.strip()
+        ]
+        slopes = {}
+        for k in [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]:
+            if len(data_list) >= k:
+                slope = np.gradient(data_list[-k:], 1)
+                slopes[f"mean_grad_last_{k}_cycles"] = np.mean(slope)
+            else:
+                slopes[f"mean_grad_last_{k}_cycles"] = "NaN"
+        # Build a schema string from the extracted slopes
+        file_schema = "\n".join(f"{key}: {value}" for key, value in slopes.items())
+        st.success("✅ File uploaded and processed successfully!")
+        st.write("📊 Extracted Features:")
+        st.text(file_schema)
+    except ValueError as e:
+        st.error(f"⚠️ Error reading file: {e}")
 
-
+# Optional UI controls for manual search
 selected_slope_window = st.selectbox(
     "Select slope window (cycles):",
     [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],
-    index=6  # Default to 500
+    index=6
 )
 
-
-# User sets similarity threshold
 scaled_threshold = st.number_input(
-    "Set Similarity Threshold (scaled):", 
-    min_value=1, 
-    max_value=5000, 
-    value=10, 
-    step=10,  # Allows stepping in increments of 100
-    format="%d"  # Ensures integer input
+    "Set Similarity Threshold (scaled):",
+    min_value=1,
+    max_value=5000,
+    value=10,
+    step=10,
+    format="%d"
+)
+actual_threshold = scaled_threshold / 1e6
+top_k = st.slider(
+    "Number of top similar batteries to return:",
+    min_value=1,
+    max_value=10,
+    value=3
 )
 
-# Scale it back for querying
-actual_threshold = scaled_threshold / 1e6  # Convert back to small range
+# AI-Powered Query Box
+user_query = st.text_input("🔍 Ask a question about battery features:")
 
-# User sets number of top results
-top_k = st.slider("Number of top similar batteries to return:", min_value=1, max_value=10, value=3)
-
-
-
-if uploaded_file:
-    # Read file and decode if necessary
-    file_content = uploaded_file.read().decode("utf-8")
-    
-    # Ensure file_content is a string
-    if isinstance(file_content, list):  
-        file_content = "\n".join(file_content)  # Convert list to string
-
-    # Convert to a list of floats
-    try:
-        data_list = [float(line.strip().replace(',', '')) for line in file_content.split("\n") if line.strip()]
-        st.success("✅ File uploaded successfully!")
-        st.write(f"📊 First 10 values: {data_list[:10]}")  # Show a preview
-    except ValueError as e:
-        st.error(f"⚠️ Error reading file: {e}")
-        
-    # Extract feature
-    slope_value = extract_slope_from_data(data_list)
-    slope_value = slope_value[f"mean_grad_last_{selected_slope_window}_cycles"]
-    
-    st.write(f"📊 Extracted Feature: **slope_last_{selected_slope_window}_cycles = {slope_value:.5f}**")
-    
-    # Query Neo4j
-    results = query_similar_batteries(slope_value, actual_threshold, top_k)
-    
-    # Display Results
-    if results:
-        st.subheader(f"🔍 Closest Matches for uploaded data:")
-        df = pd.DataFrame(results)
-        st.dataframe(df)
+if user_query:
+    # Use file-based schema if available; otherwise, fallback to the graph's schema.
+    if file_schema:
+        schema_to_use = file_schema
     else:
-        st.warning("No similar batteries found in the database.")
+        try:
+            schema_to_use = str(graph.schema)
+        except Exception:
+            schema_to_use = "Battery nodes with properties like battery_id, total_cycles, slopes, etc."
+    # (Optionally, retrieve relevant examples for debugging)
+    relevant_examples = example_selector.select_examples({"question": user_query})
+    # Generate the query using the chain, passing both the schema and the query.
+    response = chain.invoke({"schema": schema_to_use, "query": user_query})
+    st.subheader("🔎 AI Response:")
+    st.write(response)
