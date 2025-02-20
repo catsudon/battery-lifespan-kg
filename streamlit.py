@@ -148,7 +148,7 @@ if uploaded_file:
         features = extract_features_from_sample_battery_from_text(file_content)
         
         # Build a schema string from the extracted features
-        file_schema = "\n\n".join(f"{key}: {value}" for key, value in features.items())
+        file_schema = "\n".join(f"{key}: {value}" for key, value in features.items())
         st.success("✅ File uploaded and processed successfully!")
         st.write("📊 Extracted Features:")
         st.text(file_schema)
