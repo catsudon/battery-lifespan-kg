@@ -158,29 +158,6 @@ if uploaded_file:
     except ValueError as e:
         st.error(f"⚠️ Error reading file: {e}")
 
-# Optional UI controls for manual search
-selected_slope_window = st.selectbox(
-    "Select slope window (cycles):",
-    [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],
-    index=6
-)
-
-scaled_threshold = st.number_input(
-    "Set Similarity Threshold (scaled):",
-    min_value=1,
-    max_value=5000,
-    value=10,
-    step=10,
-    format="%d"
-)
-actual_threshold = scaled_threshold / 1e6
-top_k = st.slider(
-    "Number of top similar batteries to return:",
-    min_value=1,
-    max_value=10,
-    value=3
-)
-
 # AI-Powered Query Box
 user_query = st.text_input("🔍 Ask a question about battery features:")
 
