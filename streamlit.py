@@ -104,6 +104,12 @@ CYPHER_GENERATION_TEMPLATE = """Task: Generate a Cypher query to extract battery
 Schema:
 {schema}
 
+Instructions:
+- The schema is provided as key-value pairs (e.g., "mean_grad_last_100_cycles: -0.0007513692975044251").
+- Identify the battery property mentioned in the question.
+- Extract the numeric value corresponding to that property from the schema.
+- Use this numeric value in the generated query in place of any placeholder.
+
 Examples of queries:
 # Which battery has the highest total cycles?
 MATCH (b:Battery) RETURN b.battery_id, b.total_cycles ORDER BY b.total_cycles DESC LIMIT 1
@@ -142,13 +148,12 @@ if uploaded_file:
         features = extract_features_from_sample_battery_from_text(file_content)
         
         # Build a schema string from the extracted features
-        file_schema = "\n".join(f"{key}: {value}" for key, value in features.items())
+        file_schema = "\n\n".join(f"{key}: {value}" for key, value in features.items())
         st.success("✅ File uploaded and processed successfully!")
         st.write("📊 Extracted Features:")
         st.text(file_schema)
     except ValueError as e:
         st.error(f"⚠️ Error reading file: {e}")
-
 
 # AI-Powered Query Box
 user_query = st.text_input("🔍 Ask a question about battery features:")

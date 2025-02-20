@@ -17,9 +17,6 @@ def extract_features_from_sample_battery_from_text(file_text: str):
     
     # Compute total cycles as the length of the trimmed array
     total_cycles = len(trimmed_q_d_n)
-    
-    # Compute the average of the trimmed q_d_n values (if available)
-    trimmed_q_d_n_avg = float(np.mean(trimmed_q_d_n)) if total_cycles > 0 else np.nan
 
     # Define k values for which features are computed
     k_values = [10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
@@ -43,8 +40,7 @@ def extract_features_from_sample_battery_from_text(file_text: str):
         features[f'slope_last_{k}_cycles'] = slope
         features[f'mean_grad_last_{k}_cycles'] = mean_grad
 
-    # Add average of trimmed_q_d_n and total cycles to the feature set
-    features['trimmed_q_d_n_avg'] = trimmed_q_d_n_avg
+    # Add average of total cycles to the feature set
     features['total_cycles'] = total_cycles
 
     return features
